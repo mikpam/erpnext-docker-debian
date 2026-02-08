@@ -11,7 +11,9 @@ FROM pipech/erpnext-docker-debian:version-15-latest AS builder
 USER $systemUser
 WORKDIR /home/$systemUser/$benchFolderName
 
-RUN echo "-> Start builder" \
+# Cache bust: change this value to force rebuild of custom apps layer
+ARG CUSTOM_APPS_VERSION=1
+RUN echo "-> Start builder (custom apps v${CUSTOM_APPS_VERSION})" \
     ### remove unused sites, created by base image
     && rm -rf /home/$systemUser/$benchFolderName/sites/site1.local \
     ### [HOTFIX] Railway used IPv6 (Does not support IPv4),  https://docs.railway.com/guides/private-networking#caveats
