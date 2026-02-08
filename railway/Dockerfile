@@ -12,7 +12,7 @@ USER $systemUser
 WORKDIR /home/$systemUser/$benchFolderName
 
 # Cache bust: change this value to force rebuild of custom apps layer
-ARG CUSTOM_APPS_VERSION=3
+ARG CUSTOM_APPS_VERSION=4
 RUN echo "-> Start builder (custom apps v${CUSTOM_APPS_VERSION})" \
     ### remove unused sites, created by base image
     && rm -rf /home/$systemUser/$benchFolderName/sites/site1.local \
@@ -23,7 +23,7 @@ RUN echo "-> Start builder (custom apps v${CUSTOM_APPS_VERSION})" \
     && git clone https://github.com/mikpam/erpnext-custom-apps.git /tmp/custom-apps \
     && cp -r /tmp/custom-apps/ai_task_log /home/$systemUser/$benchFolderName/apps/ai_task_log \
     && /home/$systemUser/$benchFolderName/env/bin/pip install -e /home/$systemUser/$benchFolderName/apps/ai_task_log \
-    && echo "ai_task_log" >> /home/$systemUser/$benchFolderName/sites/apps.txt \
+    && printf '\nai_task_log\n' >> /home/$systemUser/$benchFolderName/sites/apps.txt \
     && /home/$systemUser/$benchFolderName/env/bin/pip install google-generativeai \
     && rm -rf /tmp/custom-apps \
     && echo "-> Builder done!"
