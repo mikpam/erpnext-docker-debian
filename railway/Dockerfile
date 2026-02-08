@@ -19,7 +19,9 @@ RUN echo "-> Start builder" \
     && sed -i 's/socket\.AF_INET, socket\.SOCK_STREAM/socket.AF_INET6, socket.SOCK_STREAM/g' /home/frappe/bench/apps/frappe/frappe/utils/connections.py \
     ### install custom apps from monorepo
     && git clone https://github.com/mikpam/erpnext-custom-apps.git /tmp/custom-apps \
-    && bench get-app /tmp/custom-apps/ai_task_log \
+    && cp -r /tmp/custom-apps/ai_task_log /home/$systemUser/$benchFolderName/apps/ai_task_log \
+    && /home/$systemUser/$benchFolderName/env/bin/pip install -e /home/$systemUser/$benchFolderName/apps/ai_task_log \
+    && echo "ai_task_log" >> /home/$systemUser/$benchFolderName/sites/apps.txt \
     && /home/$systemUser/$benchFolderName/env/bin/pip install google-generativeai \
     && rm -rf /tmp/custom-apps \
     && echo "-> Builder done!"
