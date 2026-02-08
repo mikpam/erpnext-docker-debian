@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+echo "-> Running migrations"
+su frappe -c "bench --site all migrate" || echo "-> Migration skipped (site may not exist yet)"
+
 echo "-> Clearing cache"
 su frappe -c "bench execute frappe.cache_manager.clear_global_cache"
 

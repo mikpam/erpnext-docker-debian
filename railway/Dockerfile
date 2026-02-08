@@ -17,8 +17,11 @@ RUN echo "-> Start builder" \
     ### [HOTFIX] Railway used IPv6 (Does not support IPv4),  https://docs.railway.com/guides/private-networking#caveats
     ### https://github.com/frappe/frappe/issues/33981
     && sed -i 's/socket\.AF_INET, socket\.SOCK_STREAM/socket.AF_INET6, socket.SOCK_STREAM/g' /home/frappe/bench/apps/frappe/frappe/utils/connections.py \
-    ### install your custom apps here
-    # && bench get-app https://github.com/your-repo/custom_app
+    ### install custom apps from monorepo
+    && git clone https://github.com/mikpam/erpnext-custom-apps.git /tmp/custom-apps \
+    && bench get-app /tmp/custom-apps/ai_task_log \
+    && /home/$systemUser/$benchFolderName/env/bin/pip install google-generativeai \
+    && rm -rf /tmp/custom-apps \
     && echo "-> Builder done!"
 
 
