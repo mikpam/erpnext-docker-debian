@@ -12,7 +12,7 @@ USER $systemUser
 WORKDIR /home/$systemUser/$benchFolderName
 
 # Cache bust: change this value to force rebuild of custom apps layer
-ARG CUSTOM_APPS_VERSION=6
+ARG CUSTOM_APPS_VERSION=7
 RUN echo "-> Start builder (custom apps v${CUSTOM_APPS_VERSION})" \
     ### remove unused sites, created by base image
     && rm -rf /home/$systemUser/$benchFolderName/sites/site1.local \
