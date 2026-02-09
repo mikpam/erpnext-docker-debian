@@ -8,8 +8,8 @@ echo "-> Re-linking assets (bench migrate recreates sites/assets/ as a real dire
 rm -rf /home/frappe/bench/sites/assets
 ln -sfn /home/frappe/bench/built_sites/assets /home/frappe/bench/sites/assets
 
-echo "-> Clearing cache"
-su frappe -c "bench execute frappe.cache_manager.clear_global_cache"
+echo "-> Clearing cache (full flush to purge stale assets_json from Redis)"
+su frappe -c "bench --site all clear-cache"
 
 echo "-> Bursting env into config"
 envsubst '$RFP_DOMAIN_NAME' < /home/$systemUser/temp_nginx.conf > /etc/nginx/conf.d/default.conf
