@@ -11,14 +11,26 @@ FROM pipech/erpnext-docker-debian:version-15-latest AS builder
 USER $systemUser
 WORKDIR /home/$systemUser/$benchFolderName
 
-# Cache bust: change this value to force rebuild of custom apps layer
-ARG CUSTOM_APPS_VERSION=7
-RUN echo "-> Start builder (custom apps v${CUSTOM_APPS_VERSION})" \
+# Pin exact app versions. The base tag (version-15-latest) is a MOVING target that upstream
+# froze at ~15.91 (Dec 2025) and abandoned for v16 — so we pin forward ourselves here.
+# To upgrade later: bump these tags and rebuild (reproducible, unlike the moving base tag).
+ARG FRAPPE_VERSION=v15.108.0
+ARG ERPNEXT_VERSION=v15.108.3
+# Cache bust: change this value to force rebuild of this layer
+ARG CUSTOM_APPS_VERSION=8
+RUN echo "-> Start builder (frappe ${FRAPPE_VERSION}, erpnext ${ERPNEXT_VERSION}, custom apps v${CUSTOM_APPS_VERSION})" \
     ### remove unused sites, created by base image
     && rm -rf /home/$systemUser/$benchFolderName/sites/site1.local \
-    ### [HOTFIX] Railway used IPv6 (Does not support IPv4),  https://docs.railway.com/guides/private-networking#caveats
-    ### https://github.com/frappe/frappe/issues/33981
-    && sed -i 's/socket\.AF_INET, socket\.SOCK_STREAM/socket.AF_INET6, socket.SOCK_STREAM/g' /home/frappe/bench/apps/frappe/frappe/utils/connections.py \
+    ### pin frappe + erpnext to exact release tags (base image only ships ~15.91)
+    && cd /home/$systemUser/$benchFolderName/apps/frappe \
+    && git fetch --depth 1 origin tag ${FRAPPE_VERSION} \
+    && git -c advice.detachedHead=false checkout ${FRAPPE_VERSION} \
+    && cd /home/$systemUser/$benchFolderName/apps/erpnext \
+    && git fetch --depth 1 origin tag ${ERPNEXT_VERSION} \
+    && git -c advice.detachedHead=false checkout ${ERPNEXT_VERSION} \
+    && cd /home/$systemUser/$benchFolderName \
+    ### IPv6 hotfix dropped: fixed upstream in v15.108 (connections.py now uses getaddrinfo/AF_UNSPEC)
+    && bench setup requirements \
     ### install custom apps from monorepo
     && git clone https://github.com/mikpam/erpnext-custom-apps.git /tmp/custom-apps \
     && cp -r /tmp/custom-apps/ai_task_log /home/$systemUser/$benchFolderName/apps/ai_task_log \
