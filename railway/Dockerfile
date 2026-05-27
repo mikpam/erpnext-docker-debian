@@ -17,20 +17,23 @@ WORKDIR /home/$systemUser/$benchFolderName
 ARG FRAPPE_VERSION=v15.108.0
 ARG ERPNEXT_VERSION=v15.108.3
 # Cache bust: change this value to force rebuild of this layer
-ARG CUSTOM_APPS_VERSION=8
+ARG CUSTOM_APPS_VERSION=9
 RUN echo "-> Start builder (frappe ${FRAPPE_VERSION}, erpnext ${ERPNEXT_VERSION}, custom apps v${CUSTOM_APPS_VERSION})" \
     ### remove unused sites, created by base image
     && rm -rf /home/$systemUser/$benchFolderName/sites/site1.local \
-    ### pin frappe + erpnext to exact release tags (base image only ships ~15.91)
+    ### pin frappe + erpnext to exact release tags. Base repos have NO 'origin' remote,
+    ### so fetch each tag directly from its canonical GitHub URL via explicit refspec.
     && cd /home/$systemUser/$benchFolderName/apps/frappe \
-    && git fetch --depth 1 origin tag ${FRAPPE_VERSION} \
+    && git fetch --depth 1 https://github.com/frappe/frappe.git refs/tags/${FRAPPE_VERSION}:refs/tags/${FRAPPE_VERSION} \
     && git -c advice.detachedHead=false checkout ${FRAPPE_VERSION} \
     && cd /home/$systemUser/$benchFolderName/apps/erpnext \
-    && git fetch --depth 1 origin tag ${ERPNEXT_VERSION} \
+    && git fetch --depth 1 https://github.com/frappe/erpnext.git refs/tags/${ERPNEXT_VERSION}:refs/tags/${ERPNEXT_VERSION} \
     && git -c advice.detachedHead=false checkout ${ERPNEXT_VERSION} \
     && cd /home/$systemUser/$benchFolderName \
-    ### IPv6 hotfix dropped: fixed upstream in v15.108 (connections.py now uses getaddrinfo/AF_UNSPEC)
-    && bench setup requirements \
+    ### IPv6 hotfix dropped: fixed upstream in v15.108 (connections.py uses getaddrinfo/AF_UNSPEC)
+    ### refresh python deps for the pinned versions (lighter than full 'bench setup requirements')
+    && /home/$systemUser/$benchFolderName/env/bin/pip install --no-cache-dir -e /home/$systemUser/$benchFolderName/apps/frappe \
+    && /home/$systemUser/$benchFolderName/env/bin/pip install --no-cache-dir -e /home/$systemUser/$benchFolderName/apps/erpnext \
     ### install custom apps from monorepo
     && git clone https://github.com/mikpam/erpnext-custom-apps.git /tmp/custom-apps \
     && cp -r /tmp/custom-apps/ai_task_log /home/$systemUser/$benchFolderName/apps/ai_task_log \
