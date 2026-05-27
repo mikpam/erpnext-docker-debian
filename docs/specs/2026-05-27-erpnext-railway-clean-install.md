@@ -1,99 +1,78 @@
-# ERPNext on Railway — Clean Re-platform to Official frappe_docker (v16)
+# ERPNext on Railway — Clean Re-platform to Official ERPNext v16
 
 - **Date:** 2026-05-27
-- **Status:** Design approved → spec (pending user spec review)
+- **Status:** Approved (updated — `ai_task_log` dropped per Michael; clean vanilla test bed)
 - **Repo:** `mikpam/erpnext-docker-debian` — rewritten clean on branch `rebuild/v16-official-clean`
 - **Prepared by:** Aiterated (infra)
 
 ## 1. Goal & context
+Replace the **pipech-fork-based** ERPNext deployment (Railway project `erpnext-demo`) with a clean, **vanilla official ERPNext v16**, single-service on Railway. Fresh site, **no custom apps**.
 
-Replace the current **pipech-fork-based** ERPNext deployment (Railway project `erpnext-demo`) with a clean, reproducible, **single-service ERPNext v16** built from the **official `frappe_docker`** layered image. Fresh site; custom app `ai_task_log` retained.
+> The `ai_task_log` POC proved that AI can be wired into ERPNext with just a Gemini connection key. That proof is done and the app is trivial to recreate/expand — so it is **deliberately left out** of the clean build and rebuilt later as an intentional feature (ideally on the production stack).
 
-This eliminates the anti-patterns found during the v15.108 upgrade — abandoned third-party base image (`pipech:version-15-latest`, frozen at ~15.91), unpinned versions, manual `git` surgery in the Dockerfile, and a now-obsolete IPv6 `sed` hotfix. It also serves as the **on-Railway rehearsal** for the real production target (DigitalOcean VPS + `frappe_docker` compose — tracked separately in FRIDAY `infra/project/erpnext-production-digitalocean-planned`).
+This eliminates the anti-patterns from the v15.108 upgrade (abandoned third-party base, unpinned versions, manual `git` surgery, obsolete IPv6 hotfix) and is the on-Railway rehearsal for the real production target (DigitalOcean VPS + `frappe_docker` compose — FRIDAY `infra/project/erpnext-production-digitalocean-planned`).
 
 ### Why single-service on Railway
-Railway allows **one volume per service**; Frappe requires **one shared `sites` volume across all its services**. True multi-service is therefore impossible on Railway, so all Frappe processes run in **one container via Supervisor** (the community-standard Railway pattern), mounting one `sites` volume.
+Railway allows one volume per service; Frappe needs one shared `sites` volume across all its services. True multi-service is impossible on Railway, so all processes run in **one container via Supervisor** (community-standard Railway pattern).
 
 ## 2. Locked decisions
-
 | Decision | Choice |
 |---|---|
-| App source | **Official `frappe/erpnext`** (the `mikpam/erpnext-fork` is an unmodified mirror — no reason to use it) |
+| App | **Vanilla official `frappe/erpnext` — NO custom apps** |
 | Version | **ERPNext v16 + Frappe v16** |
-| Database | **MariaDB** (reuse the existing Railway `mariadb` service; bump image toward 11.x if v16 requires — confirm during build). NOT Postgres/Neon. |
-| Runtime | **Single Railway service + Supervisor** (nginx + gunicorn + socketio + workers + scheduler) |
-| Custom app | **`ai_task_log`** baked in via `apps.json` (confirm/port v16 compatibility) |
-| Data | **Clean install — fresh site, no migration** (old 8 `ai_task_log` records sacrificed; safety backup taken first) |
-| Build method | **Layered `Containerfile` + `apps.json`** (NOT the prebuilt `frappe/erpnext:v16` image — it cannot include the custom app) |
-| Supervisor | **Roll our own `supervisord.conf`** on the official image (auditable; Railway's ERPNext template used only as a sanity reference) |
-| Repo strategy | **Rewrite the existing repo** on a branch → PR → merge (keeps Railway's GitHub connection intact; no service reconfig) |
+| Base image | Official **prebuilt `frappe/erpnext:<v16-tag>`** + a thin Supervisor layer. No source build, no `apps.json`, no BuildKit secret (all unnecessary without custom apps). |
+| Database | **MariaDB** (reuse Railway `mariadb` 10.6; v16 needs ≥10.6). NOT Postgres. |
+| Runtime | **Single Railway service + Supervisor** (nginx + gunicorn + socketio + worker + scheduler) |
+| Data | **Clean install — fresh site, no migration** |
+| Repo | **Rewrite the existing repo** on a branch → PR → merge (keeps Railway's connection) |
 
 ## 3. Architecture
-
-### 3.1 Build (`railway/Dockerfile` → official layered build)
-- Build **via `frappe_docker`'s `images/layered/Containerfile`** with build args `FRAPPE_PATH=https://github.com/frappe/frappe`, `FRAPPE_BRANCH=version-16`.
-- `apps.json` (BuildKit secret), pinned:
-  ```json
-  [
-    { "url": "https://github.com/frappe/erpnext", "branch": "version-16" },
-    { "url": "https://github.com/mikpam/erpnext-custom-apps", "branch": "<v16-branch>" }
-  ]
-  ```
-- Then a thin layer on top: install `supervisor`, copy our `supervisord.conf`, nginx config handling, and the boot/entrypoint scripts.
-- Result: a single image containing frappe v16 + erpnext v16 + `ai_task_log`, with assets built (`bench build`), runnable as one supervised container.
-
-> **`ai_task_log` packaging:** it currently lives as a subdirectory in the `erpnext-custom-apps` monorepo. The layered build's `apps.json` expects one app per repo URL. **Implementation must confirm** how to install a monorepo-subdir app (e.g., split `ai_task_log` into its own repo/branch, or install it in the extra layer via `bench get-app` from the cloned monorepo). Tracked in §8.
+### 3.1 Build (`railway/Dockerfile`)
+```
+FROM frappe/erpnext:<v16-tag>
++ install supervisor, copy supervisord.conf + entrypoint
+```
+That's the whole image — no custom app, no `apps.json`. The only customization over the official image is the Supervisor layer (needed because Railway is single-container).
 
 ### 3.2 Runtime (single container, Supervisor-managed)
-Supervised processes (all on localhost):
-- **nginx** — serves `sites/assets` + reverse-proxies; configured via the official `nginx-entrypoint.sh` templating with `BACKEND=127.0.0.1:8000`, `SOCKETIO=127.0.0.1:9000`.
-- **gunicorn** — Frappe web/API on `127.0.0.1:8000`.
-- **socketio** (node) — `127.0.0.1:9000`.
-- **bench worker** — queues `short,default,long` (1+ worker processes).
-- **bench schedule** — scheduler.
+- **nginx** — `nginx-entrypoint.sh`, `BACKEND=127.0.0.1:8000`, `SOCKETIO=127.0.0.1:9000`.
+- **gunicorn** — Frappe web/API on `127.0.0.1:8000` (exact command confirmed from the image in Phase 1).
+- **socketio** — `node /home/frappe/frappe-bench/apps/frappe/socketio.js` on 9000.
+- **worker** — `bench worker --queue long,default,short`.
+- **scheduler** — `bench schedule`.
 
 ### 3.3 Boot flow (entrypoint)
-1. **Configurator (idempotent):** write `common_site_config.json` with `db_host`, `db_port`, `redis_cache`, `redis_queue`, `socketio_port` — pointing at the Railway **internal** service hostnames.
-2. **First boot only** (guard: site dir absent on the volume): `bench new-site <site> --db-root-password <env> --admin-password <env> --install-app erpnext` → `bench install-app ai_task_log` → `bench enable-scheduler`.
-3. **Subsequent boots:** `bench --site all migrate` (assets are baked in the image; rebuild only if needed).
+1. Configurator (idempotent): set `db_host`, `db_port`, `redis_cache`, `redis_queue`, `socketio_port` from Railway env → Railway internal hostnames.
+2. First boot only (site dir absent): `bench new-site <site> --db-root-password <env> --admin-password <env> --install-app erpnext --set-default`.
+3. Later boots: `bench --site all migrate`.
 4. Start `supervisord`.
 
 ### 3.4 Services (Railway project `erpnext-demo`)
-- **erpnext** — new supervised image (this repo); public domain; one volume mounted at **`/home/frappe/frappe-bench/sites`** *(note: official path differs from pipech's `/home/frappe/bench/sites` — the volume is started empty for the clean install)*.
-- **mariadb** (reuse; fresh DB for the new site), **redis-cache**, **redis-queue** (reuse).
-- **Env vars:** site name, admin password, db root password; `DB_HOST`, `REDIS_CACHE`, `REDIS_QUEUE` → Railway internal hostnames. (Reuse `RFP_*` names or rename — §8.)
+- **erpnext** — new image; public domain; volume at **`/home/frappe/frappe-bench/sites`** (official path; started empty for the clean install).
+- **mariadb** (reuse; fresh DB), **redis-cache**, **redis-queue** (reuse).
+- Env: `SITE_NAME`, `ADMIN_PASSWORD`, `DB_ROOT_PASSWORD`, `DB_HOST`, `DB_PORT`, `REDIS_CACHE`, `REDIS_QUEUE`.
 
 ## 4. Build & deploy flow
-1. Branch `rebuild/v16-official-clean` off `master`.
-2. Replace `railway/Dockerfile` with the official-layered build; add `apps.json`, `supervisord.conf`, nginx config, entrypoint/boot scripts; remove the pipech-era scripts.
-3. PR → review → merge to `master` → Railway auto-builds + deploys.
-4. First boot performs the clean `new-site`.
+Branch → replace `railway/Dockerfile`, add `supervisord.conf` + `entrypoint.sh`, remove pipech-era scripts → PR → merge → Railway auto-builds + deploys → first boot creates the fresh site.
 
-## 5. Data & safety
-- **Clean install = fresh site.** The existing v15.108 site (8 `ai_task_log` records) is NOT carried over.
-- **Before merging the rebuild:** take a final `bench backup --with-files` of the current v15.108 site and **copy it off the volume** (the volume is emptied for the new site). This is the only recovery path back to the old state.
-- New site uses a fresh DB; the old DB may be dropped or left in MariaDB.
+## 5. Safety
+Data is a throwaway POC; take a quick `bench backup` before merge as cheap insurance. Rollback = redeploy the previous Railway deployment (`fe71718d` v15.108).
 
 ## 6. Verification (post-deploy)
-- `bench version` → frappe 16.x, erpnext 16.x, `ai_task_log` present.
-- `GET /` → 200, login renders; `/api/method/ping` → `pong`.
-- Assets resolve (no 404).
+- `bench version` → frappe 16.x, erpnext 16.x.
+- `GET /` → 200; `/api/method/ping` → `pong`; login renders; assets resolve (no 404).
 - `migrate` clean; all supervisor processes `RUNNING`.
-- `ai_task_log` module loads; create a test record.
-- DB/Redis connectivity over Railway IPv6 OK (v16 uses `getaddrinfo`/`AF_UNSPEC` — no hotfix needed).
-- Deployment `SUCCESS` ≠ healthy: expect a transient 502 during first-boot `new-site`/build; verify by hitting the URL.
+- DB/Redis over Railway IPv6 OK (v16 `getaddrinfo`/`AF_UNSPEC` — no hotfix).
+- Note: deployment `SUCCESS` ≠ healthy — expect a transient 502 during first-boot `new-site`; verify via the URL.
 
 ## 7. Rollback
-- **Code:** redeploy the previous v15.108 Railway deployment (still in Railway's deployment history).
-- **Data:** clean install replaces the site/volume, so a true rollback also requires restoring the §5 pre-rebuild backup. **Decide the go/no-go before merge** — once the fresh site is created, the old site is gone unless restored.
+Code: redeploy the previous v15.108 deployment (still in Railway history). Clean install replaces the site/volume; old data is throwaway POC, so no data-restore concern.
 
-## 8. Open items (resolve in the implementation plan)
-- `ai_task_log` v16 compatibility (may need a code port) **and** how the layered build installs a monorepo-subdir app.
-- Exact `supervisord.conf` process list + the official image's gunicorn/socketio invocation.
-- Volume path change (pipech `/home/frappe/bench` → official `/home/frappe/frappe-bench`); confirm the Railway volume remounts cleanly (empty).
-- MariaDB version (keep 10.6 vs bump to 11.x for v16).
-- Env-var naming (reuse `RFP_*` vs rename).
+## 8. Open items (Phase 1 spike)
+- Exact v16 image tag + the image's gunicorn command + confirm `bench`/`socketio.js`/`nginx-entrypoint.sh` paths.
+- Volume path change (pipech `/home/frappe/bench` → official `/home/frappe/frappe-bench`); start empty.
 
 ## Out of scope
 - DigitalOcean production build (FRIDAY `infra/project/erpnext-production-digitalocean-planned`).
-- `doctl` setup / DO access wiring.
+- `doctl` setup.
+- The AI / Gemini integration — deliberate later follow-up (POC already proved the pattern).
